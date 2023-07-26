@@ -539,6 +539,10 @@ where
                                 .project()
                                 .state
                                 .set(State::WaitingToReconnect(delay(duration, "reconnecting")));
+
+                            // Wake this task so we get polled again and can transition into the
+                            // WaitingToReconnect state.
+                            cx.waker().wake_by_ref();
                         }
 
                         if let Some(cause) = e.source() {
@@ -561,6 +565,10 @@ where
                             .project()
                             .state
                             .set(State::WaitingToReconnect(delay(duration, "retrying")));
+
+                        // Wake this task so we get polled again and can transition into the
+                        // WaitingToReconnect state.
+                        cx.waker().wake_by_ref();
 
                         if self.event_parser.was_processing() {
                             return Poll::Ready(Some(Err(Error::UnexpectedEof)));
