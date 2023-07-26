@@ -415,6 +415,7 @@ where
         loop {
             let this = self.as_mut().project();
             if let Some(event) = this.event_parser.get_event() {
+                trace!("Got SSE event, returning early");
                 return match event {
                     SSE::Event(ref evt) => {
                         *this.last_event_id = evt.id.clone();
