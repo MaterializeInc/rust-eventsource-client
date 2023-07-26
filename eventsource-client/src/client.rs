@@ -13,7 +13,7 @@ use hyper::{
 use hyper_rustls::{HttpsConnector as TlsConnector, HttpsConnectorBuilder};
 #[cfg(all(feature = "hypertls", not(feature = "rustls")))]
 use hyper_tls::HttpsConnector as TlsConnector;
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace, warn, error};
 use pin_project::pin_project;
 use std::{
     boxed,
@@ -500,6 +500,10 @@ where
                         warn!("request returned an error: {}", e);
                         if !*retry {
                             self.as_mut().project().state.set(State::New);
+                            // Wake this task so we get polled again and can transition into the
+                            // New state that we just set.
+                            cx.waker().wake_by_ref();
+
                             return Poll::Ready(Some(Err(Error::HttpStream(Box::new(e)))));
                         }
                         let duration = self
@@ -539,9 +543,10 @@ where
                                 .project()
                                 .state
                                 .set(State::WaitingToReconnect(delay(duration, "reconnecting")));
+                            error!("HTTP body errored! {e:?}");
 
                             // Wake this task so we get polled again and can transition into the
-                            // WaitingToReconnect state.
+                            // WaitingToReconnect state that we just set.
                             cx.waker().wake_by_ref();
                         }
 
@@ -565,9 +570,10 @@ where
                             .project()
                             .state
                             .set(State::WaitingToReconnect(delay(duration, "retrying")));
+                        error!("HTTP body ended!");
 
                         // Wake this task so we get polled again and can transition into the
-                        // WaitingToReconnect state.
+                        // WaitingToReconnect state that we just set.
                         cx.waker().wake_by_ref();
 
                         if self.event_parser.was_processing() {
