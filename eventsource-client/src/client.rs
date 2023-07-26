@@ -1,4 +1,4 @@
-use futures::{ready, Stream};
+use futures::{ready, FutureExt, Stream};
 use hyper::{
     body::HttpBody,
     client::{
@@ -13,7 +13,7 @@ use hyper::{
 use hyper_rustls::{HttpsConnector as TlsConnector, HttpsConnectorBuilder};
 #[cfg(all(feature = "hypertls", not(feature = "rustls")))]
 use hyper_tls::HttpsConnector as TlsConnector;
-use log::{debug, info, trace, warn, error};
+use log::{debug, error, info, trace, warn};
 use pin_project::pin_project;
 use std::{
     boxed,
@@ -287,7 +287,7 @@ enum State {
         resp: ResponseFuture,
     },
     Connected(#[pin] hyper::Body),
-    WaitingToReconnect(#[pin] Sleep),
+    WaitingToReconnect(Pin<Box<Sleep>>),
     FollowingRedirect(Option<HeaderValue>),
     StreamClosed,
 }
@@ -457,7 +457,10 @@ where
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
-                        info!("sse connection request completed (status {})", resp.status());
+                        info!(
+                            "sse connection request completed (status {})",
+                            resp.status()
+                        );
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
@@ -539,15 +542,16 @@ where
                                 .project()
                                 .retry_strategy
                                 .next_delay(Instant::now());
+
+                            let mut delay = delay(duration, "reconnecting");
+                            let result = delay.poll_unpin(cx);
+                            assert!(result.is_pending());
+
                             self.as_mut()
                                 .project()
                                 .state
-                                .set(State::WaitingToReconnect(delay(duration, "reconnecting")));
+                                .set(State::WaitingToReconnect(delay));
                             error!("HTTP body errored! {e:?}");
-
-                            // Wake this task so we get polled again and can transition into the
-                            // WaitingToReconnect state that we just set.
-                            cx.waker().wake_by_ref();
                         }
 
                         if let Some(cause) = e.source() {
@@ -566,15 +570,16 @@ where
                             .project()
                             .retry_strategy
                             .next_delay(Instant::now());
+
+                        let mut delay = delay(duration, "retrying");
+                        let result = delay.poll_unpin(cx);
+                        assert!(result.is_pending());
+
                         self.as_mut()
                             .project()
                             .state
-                            .set(State::WaitingToReconnect(delay(duration, "retrying")));
+                            .set(State::WaitingToReconnect(delay));
                         error!("HTTP body ended!");
-
-                        // Wake this task so we get polled again and can transition into the
-                        // WaitingToReconnect state that we just set.
-                        cx.waker().wake_by_ref();
 
                         if self.event_parser.was_processing() {
                             return Poll::Ready(Some(Err(Error::UnexpectedEof)));
@@ -583,7 +588,7 @@ where
                     }
                 },
                 StateProj::WaitingToReconnect(delay) => {
-                    ready!(delay.poll(cx));
+                    ready!(delay.poll_unpin(cx));
                     info!("Reconnecting");
                     self.as_mut().project().state.set(State::New);
                 }
@@ -609,9 +614,9 @@ fn uri_from_header(maybe_header: &Option<HeaderValue>) -> Result<Uri> {
         .map_err(|e| Error::MalformedLocationHeader(Box::new(e)))
 }
 
-fn delay(dur: Duration, description: &str) -> Sleep {
+fn delay(dur: Duration, description: &str) -> Pin<Box<Sleep>> {
     info!("Waiting {:?} before {}", dur, description);
-    tokio::time::sleep(dur)
+    Box::pin(tokio::time::sleep(dur))
 }
 
 #[derive(Debug)]
