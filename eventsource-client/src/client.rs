@@ -71,6 +71,7 @@ pub struct ClientBuilder {
     url: Uri,
     headers: HeaderMap,
     reconnect_opts: ReconnectOptions,
+    connect_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
     last_event_id: Option<String>,
     method: String,
@@ -93,6 +94,7 @@ impl ClientBuilder {
             url,
             headers: header_map,
             reconnect_opts: ReconnectOptions::default(),
+            connect_timeout: None,
             read_timeout: None,
             last_event_id: None,
             method: String::from("GET"),
@@ -129,6 +131,12 @@ impl ClientBuilder {
 
         self.headers.insert(name, value);
         Ok(self)
+    }
+
+    /// Set a connect timeout for the underlying connection. There is no connect timeout by default.
+    pub fn connect_timeout(mut self, connect_timeout: Duration) -> ClientBuilder {
+        self.connect_timeout = Some(connect_timeout);
+        self
     }
 
     /// Set a read timeout for the underlying connection. There is no read timeout by default.
@@ -432,6 +440,7 @@ where
                     *self.as_mut().project().event_parser = EventParser::new();
                     match self.send_request() {
                         Ok(resp) => {
+                            info!("constructed sse connection request");
                             let retry = self.props.reconnect_opts.retry_initial;
                             self.as_mut()
                                 .project()
@@ -448,6 +457,7 @@ where
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
+                        info!("sse connection request completed (status {})", resp.status());
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
