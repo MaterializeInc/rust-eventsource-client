@@ -440,6 +440,7 @@ where
                     *self.as_mut().project().event_parser = EventParser::new();
                     match self.send_request() {
                         Ok(resp) => {
+                            info!("constructed sse connection request");
                             let retry = self.props.reconnect_opts.retry_initial;
                             self.as_mut()
                                 .project()
@@ -456,6 +457,7 @@ where
                 }
                 StateProj::Connecting { retry, resp } => match ready!(resp.poll(cx)) {
                     Ok(resp) => {
+                        info!("sse connection request completed (status {})", resp.status());
                         debug!("HTTP response: {:#?}", resp);
 
                         if resp.status().is_success() {
