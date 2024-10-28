@@ -171,6 +171,7 @@ impl ClientBuilder {
         C::Error: Into<BoxError>,
     {
         let mut connector = TimeoutConnector::new(conn);
+        connector.set_connect_timeout(self.connect_timeout);
         connector.set_read_timeout(self.read_timeout);
 
         let client = hyper::Client::builder().build::<_, hyper::Body>(connector);
